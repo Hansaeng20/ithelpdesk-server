@@ -10,25 +10,60 @@ const {
     searchTickets,
     getOverdueTickets,
     getTicketStats,
-    getTicketAnalytics
+    getTicketAnalytics,
 } = require("../controllers/ticketController");
+
+const {
+    protect,
+    authorize,
+} = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// Processing / analytics routes MUST come before /:id
-router.get("/search", searchTickets);
-router.get("/overdue", getOverdueTickets);
-router.get("/stats", getTicketStats);
-router.get("/analytics", getTicketAnalytics);
+// Ticket viewing
+router.get("/", protect, getTickets);
 
-// Basic CRUD
-router.get("/", getTickets);
-router.post("/", createTicket);
+router.get("/search", protect, searchTickets);
 
-router.patch("/:id/status", updateTicketStatus);
+router.get("/overdue", protect, getOverdueTickets);
 
-router.get("/:id", getTicket);
-router.put("/:id", updateTicket);
-router.delete("/:id", deleteTicket);
+// Analytics are IT Support only
+router.get(
+    "/stats",
+    protect,
+    authorize("IT Support"),
+    getTicketStats
+);
+
+router.get(
+    "/analytics",
+    protect,
+    authorize("IT Support"),
+    getTicketAnalytics
+);
+
+// Only Employees can create tickets
+router.post(
+    "/",
+    protect,
+    authorize("Employee"),
+    createTicket
+);
+// Individual ticket
+router.get("/:id", protect, getTicket);
+
+// Employees can only modify their own tickets.
+// IT Support can modify all tickets.
+router.put("/:id", protect, updateTicket);
+
+router.delete("/:id", protect, deleteTicket);
+
+// Only IT Support can change ticket status
+router.patch(
+    "/:id/status",
+    protect,
+    authorize("IT Support"),
+    updateTicketStatus
+);
 
 module.exports = router;

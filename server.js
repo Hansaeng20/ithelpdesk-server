@@ -9,6 +9,7 @@ const errorHandler = require("./middleware/errorHandler");
 const departmentRoutes = require("./routes/departmentRoutes");
 const ticketRoutes = require("./routes/ticketRoutes");
 const commentRoutes = require("./routes/commentRoutes");
+const authRoutes = require("./routes/authRoutes");
 
 dotenv.config();
 
@@ -31,6 +32,7 @@ app.get("/api", (req, res) => {
         message: "IT Helpdesk API is running"
     });
 });
+app.use("/api/auth", authRoutes);
 app.use("/api/departments", departmentRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/comments", commentRoutes);

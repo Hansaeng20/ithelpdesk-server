@@ -39,6 +39,11 @@ const ticketSchema = new mongoose.Schema(
             trim: true,
             lowercase: true
         },
+        requester: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: true
+        },
 
         department: {
             type: mongoose.Schema.Types.ObjectId,
@@ -72,18 +77,11 @@ const ticketSchema = new mongoose.Schema(
             required: true,
             enum: [
                 "Open",
-                "Assigned",
                 "In Progress",
                 "Resolved",
-                "Closed",
                 "Cancelled"
             ],
             default: "Open"
-        },
-
-        assignedTo: {
-            type: String,
-            default: ""
         },
 
         slaHours: {

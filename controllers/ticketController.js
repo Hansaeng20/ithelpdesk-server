@@ -1,6 +1,12 @@
 const mongoose = require("mongoose");
+
 const Ticket = require("../models/Ticket");
 const Department = require("../models/Department");
+const User = require("../models/User");
+
+const isValidObjectId = (id) => {
+    return mongoose.Types.ObjectId.isValid(id);
+};
 
 const SLA_HOURS = {
     Critical: 4,
@@ -10,25 +16,30 @@ const SLA_HOURS = {
 };
 
 const ALLOWED_STATUS_TRANSITIONS = {
-    Open: ["Assigned", "Cancelled"],
-    Assigned: ["In Progress", "Cancelled"],
-    "In Progress": ["Resolved", "Cancelled"],
-    Resolved: ["Closed"],
-    Closed: [],
-    Cancelled: []
+    Open: ["In Progress"],
+    "In Progress": ["Resolved"],
+    Resolved: [],
+    Cancelled: [],
 };
 
 // GET ALL TICKETS
 const getTickets = async (req, res, next) => {
     try {
-        const tickets = await Ticket.find()
+        const filter = {};
+
+        if (req.user.role === "Employee") {
+            filter.requester = req.user.id;
+        }
+
+        const tickets = await Ticket.find(filter)
             .populate("department", "name code")
+            .populate("requester", "name email role")
             .sort({ createdAt: -1 });
 
         res.status(200).json({
             success: true,
             count: tickets.length,
-            tickets
+            tickets,
         });
     } catch (error) {
         next(error);
@@ -40,28 +51,40 @@ const getTicket = async (req, res, next) => {
     try {
         const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
+        if (!isValidObjectId(id)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid ticket ID"
+                message: "Invalid ticket ID.",
             });
         }
 
-        const ticket = await Ticket.findById(id).populate(
-            "department",
-            "name code"
-        );
+        const ticket = await Ticket.findById(id)
+            .populate("department", "name code")
+            .populate("requester", "name email role");
 
         if (!ticket) {
             return res.status(404).json({
                 success: false,
-                message: "Ticket not found"
+                message: "Ticket not found.",
+            });
+        }
+
+        if (
+            req.user.role === "Employee" &&
+            (
+                !ticket.requester ||
+                ticket.requester._id.toString() !== req.user.id.toString()
+            )
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You can only access your own tickets.",
             });
         }
 
         res.status(200).json({
             success: true,
-            ticket
+            ticket,
         });
     } catch (error) {
         next(error);
@@ -69,41 +92,74 @@ const getTicket = async (req, res, next) => {
 };
 
 // CREATE TICKET
+// CREATE TICKET
+
 const createTicket = async (req, res, next) => {
     try {
         const {
             title,
             description,
-            requesterName,
-            requesterEmail,
-            department,
             category,
-            priority
+            priority,
         } = req.body;
 
-        if (!mongoose.Types.ObjectId.isValid(department)) {
-            return res.status(400).json({
+        // Only Employees can create tickets.
+        if (req.user.role !== "Employee") {
+            return res.status(403).json({
                 success: false,
-                message: "Invalid department ID"
+                message: "Only employees can create tickets.",
             });
         }
 
-        const departmentExists = await Department.findById(department);
+        // Get the authenticated employee.
+        const user = await User.findById(req.user.id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User account not found.",
+            });
+        }
+
+        // The employee's department comes from their account.
+        if (!user.department) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Your account does not have a department assigned. Please contact IT Support.",
+            });
+        }
+
+        // Validate required ticket fields.
+        if (!title || !description || !category || !priority) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Title, description, category, and priority are required.",
+            });
+        }
+
+        // Verify the employee's department still exists.
+        const departmentExists = await Department.findById(
+            user.department
+        );
 
         if (!departmentExists) {
             return res.status(400).json({
                 success: false,
-                message: "Department not found"
+                message:
+                    "Your assigned department could not be found.",
             });
         }
 
+        // Calculate SLA based on priority.
         const selectedPriority = priority || "Medium";
         const slaHours = SLA_HOURS[selectedPriority];
 
         if (!slaHours) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid priority"
+                message: "Invalid priority.",
             });
         }
 
@@ -111,6 +167,7 @@ const createTicket = async (req, res, next) => {
             Date.now() + slaHours * 60 * 60 * 1000
         );
 
+        // Generate the next ticket number.
         const lastTicket = await Ticket.findOne()
             .sort({ ticketNumber: -1 })
             .select("ticketNumber");
@@ -128,46 +185,56 @@ const createTicket = async (req, res, next) => {
             }
         }
 
-        const ticketNumber = `IT-${String(nextNumber).padStart(6, "0")}`;
+        const ticketNumber = `IT-${String(nextNumber).padStart(
+            6,
+            "0"
+        )}`;
 
+        // Create the ticket using authenticated user information.
         const ticket = await Ticket.create({
             ticketNumber,
             title,
             description,
-            requesterName,
-            requesterEmail,
-            department,
+
+            requesterName: user.name,
+            requesterEmail: user.email,
+            requester: user._id,
+
+            department: user.department,
+
             category,
             priority: selectedPriority,
             slaHours,
-            dueAt
+            dueAt,
         });
 
-        const populatedTicket = await Ticket.findById(ticket._id).populate(
-            "department",
-            "name code"
-        );
+        // Return the ticket with department details.
+        const populatedTicket = await Ticket.findById(
+            ticket._id
+        )
+            .populate("department", "name code")
+            .populate("requester", "name email role");
 
         res.status(201).json({
             success: true,
-            message: "Ticket created successfully",
-            ticket: populatedTicket
+            message: "Ticket created successfully.",
+            ticket: populatedTicket,
         });
     } catch (error) {
         if (error.name === "ValidationError") {
             return res.status(400).json({
                 success: false,
-                message: "Validation failed",
+                message: "Validation failed.",
                 errors: Object.values(error.errors).map(
                     (validationError) => validationError.message
-                )
+                ),
             });
         }
 
         if (error.code === 11000) {
             return res.status(400).json({
                 success: false,
-                message: "Ticket number already exists"
+                message: "Ticket number already exists.",
             });
         }
 
@@ -249,14 +316,7 @@ const updateTicket = async (req, res, next) => {
             );
         }
 
-        const ticket = await Ticket.findByIdAndUpdate(
-            id,
-            updateData,
-            {
-                new: true,
-                runValidators: true
-            }
-        ).populate("department", "name code");
+        const ticket = await Ticket.findById(id);
 
         if (!ticket) {
             return res.status(404).json({
@@ -265,11 +325,42 @@ const updateTicket = async (req, res, next) => {
             });
         }
 
+        if (
+            req.user.role === "Employee" &&
+            ticket.requester.toString() !== req.user.id.toString()
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You can only modify your own tickets."
+            });
+        }
+
+        if (
+            req.user.role === "Employee" &&
+            (
+                updateData.assignedTo !== undefined ||
+                updateData.priority !== undefined
+            )
+        ) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Employees cannot modify ticket assignment or priority."
+            });
+        }
+
+        Object.assign(ticket, updateData);
+
+        await ticket.save();
+
+        await ticket.populate("department", "name code");
+
         res.status(200).json({
             success: true,
             message: "Ticket updated successfully",
             ticket
         });
+
     } catch (error) {
         if (error.name === "ValidationError") {
             return res.status(400).json({
@@ -297,7 +388,26 @@ const deleteTicket = async (req, res, next) => {
             });
         }
 
-        const ticket = await Ticket.findByIdAndDelete(id);
+        const ticket = await Ticket.findById(id);
+
+        if (!ticket) {
+            return res.status(404).json({
+                success: false,
+                message: "Ticket not found"
+            });
+        }
+
+        if (
+            req.user.role === "Employee" &&
+            ticket.requester.toString() !== req.user.id.toString()
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You can only delete your own tickets."
+            });
+        }
+
+        await ticket.deleteOne();
 
         if (!ticket) {
             return res.status(404).json({
@@ -357,7 +467,29 @@ const updateTicketStatus = async (req, res, next) => {
         if (!allowedNextStatuses.includes(status)) {
             return res.status(400).json({
                 success: false,
-                message: `Cannot change status from ${ticket.status} to ${status}`
+                message:
+                    `Cannot change status from ${ticket.status} to ${status}`
+            });
+        }
+
+        // Repair older tickets that do not yet have a requester.
+        if (!ticket.requester) {
+            const user = await User.findOne({
+                email: ticket.requesterEmail
+            });
+
+            if (user) {
+                ticket.requester = user._id;
+            }
+        }
+
+        // Make sure the required requester field is available
+        // before saving the ticket.
+        if (!ticket.requester) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Ticket requester could not be identified."
             });
         }
 
@@ -367,24 +499,39 @@ const updateTicketStatus = async (req, res, next) => {
             ticket.resolvedAt = new Date();
         }
 
+        if (status === "Closed" && !ticket.resolvedAt) {
+            ticket.resolvedAt = new Date();
+        }
+
         await ticket.save();
 
-        const updatedTicket = await Ticket.findById(ticket._id).populate(
-            "department",
-            "name code"
-        );
+        const updatedTicket = await Ticket.findById(
+            ticket._id
+        )
+            .populate("department", "name code")
+            .populate("requester", "name email role");
 
         res.status(200).json({
             success: true,
-            message: `Ticket status changed to ${status}`,
+            message:
+                `Ticket status changed to ${status}`,
             ticket: updatedTicket
         });
+
     } catch (error) {
+        if (error.name === "ValidationError") {
+            return res.status(400).json({
+                success: false,
+                message: "Validation failed",
+                errors: Object.values(error.errors).map(
+                    (validationError) =>
+                        validationError.message
+                )
+            });
+        }
+
         next(error);
     }
-
-
-
 };
 
 // SEARCH AND FILTER TICKETS
@@ -402,6 +549,9 @@ const searchTickets = async (req, res, next) => {
         } = req.query;
 
         const filter = {};
+        if (req.user.role === "Employee") {
+            filter.requester = req.user.id;
+        }
 
         // Keyword search
         if (q) {
@@ -488,12 +638,18 @@ const getOverdueTickets = async (req, res, next) => {
     try {
         const now = new Date();
 
-        const tickets = await Ticket.find({
+        const filter = {
             dueAt: { $lt: now },
             status: {
                 $nin: ["Resolved", "Closed", "Cancelled"]
             }
-        })
+        };
+
+        if (req.user.role === "Employee") {
+            filter.requester = req.user.id;
+        }
+
+        const tickets = await Ticket.find(filter)
             .populate("department", "name code")
             .sort({ dueAt: 1 });
 
@@ -514,98 +670,107 @@ const getTicketStats = async (req, res, next) => {
         const [
             total,
             open,
-            assigned,
             inProgress,
             resolved,
-            closed,
             cancelled,
-            overdue
+            overdue,
         ] = await Promise.all([
             Ticket.countDocuments(),
-            Ticket.countDocuments({ status: "Open" }),
-            Ticket.countDocuments({ status: "Assigned" }),
-            Ticket.countDocuments({ status: "In Progress" }),
-            Ticket.countDocuments({ status: "Resolved" }),
-            Ticket.countDocuments({ status: "Closed" }),
-            Ticket.countDocuments({ status: "Cancelled" }),
+
+            Ticket.countDocuments({
+                status: "Open",
+            }),
+
+            Ticket.countDocuments({
+                status: "In Progress",
+            }),
+
+            Ticket.countDocuments({
+                status: "Resolved",
+            }),
+
+            Ticket.countDocuments({
+                status: "Cancelled",
+            }),
+
             Ticket.countDocuments({
                 dueAt: { $lt: new Date() },
                 status: {
-                    $nin: ["Resolved", "Closed", "Cancelled"]
-                }
-            })
+                    $nin: ["Resolved", "Cancelled"],
+                },
+            }),
         ]);
 
         const byCategory = await Ticket.aggregate([
             {
                 $group: {
                     _id: "$category",
-                    count: { $sum: 1 }
-                }
+                    count: { $sum: 1 },
+                },
             },
             {
-                $sort: { count: -1 }
-            }
+                $sort: { count: -1 },
+            },
         ]);
 
         const byPriority = await Ticket.aggregate([
             {
                 $group: {
                     _id: "$priority",
-                    count: { $sum: 1 }
-                }
+                    count: { $sum: 1 },
+                },
             },
             {
-                $sort: { count: -1 }
-            }
+                $sort: { count: -1 },
+            },
         ]);
 
         const byDepartment = await Ticket.aggregate([
             {
                 $group: {
                     _id: "$department",
-                    count: { $sum: 1 }
-                }
+                    count: { $sum: 1 },
+                },
             },
             {
                 $lookup: {
                     from: "departments",
                     localField: "_id",
                     foreignField: "_id",
-                    as: "department"
-                }
+                    as: "department",
+                },
             },
             {
-                $unwind: "$department"
+                $unwind: "$department",
             },
             {
                 $project: {
                     _id: 0,
                     department: "$department.name",
                     code: "$department.code",
-                    count: 1
-                }
+                    count: 1,
+                },
             },
             {
-                $sort: { count: -1 }
-            }
+                $sort: { count: -1 },
+            },
         ]);
 
         res.status(200).json({
             success: true,
+
             summary: {
                 total,
                 open,
-                assigned,
                 inProgress,
                 resolved,
-                closed,
                 cancelled,
-                overdue
+                overdue,
             },
+
             byCategory,
             byPriority,
-            byDepartment
+            byDepartment,
         });
     } catch (error) {
         next(error);
