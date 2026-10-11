@@ -6,6 +6,8 @@ const connectDB = require("../config/db");
 const Department = require("../models/Department");
 const Ticket = require("../models/Ticket");
 const TicketComment = require("../models/TicketComment");
+const User = require("../models/User");
+const bcrypt = require("bcryptjs");
 
 dotenv.config();
 
@@ -41,19 +43,40 @@ const seedDatabase = async () => {
     try {
         await connectDB();
 
-        console.log("Clearing existing seed data...");
+        console.log("Refreshing sample tickets and comments...");
 
         await TicketComment.deleteMany({});
         await Ticket.deleteMany({});
-        await Department.deleteMany({});
-
-        const createdDepartments = await Department.insertMany(departments);
+        const createdDepartments = await Promise.all(departments.map(({ code, ...details }) =>
+            Department.findOneAndUpdate({ code }, { $set: details }, { upsert: true, new: true, runValidators: true })
+        ));
 
         const departmentMap = {};
 
         createdDepartments.forEach((department) => {
             departmentMap[department.code] = department._id;
         });
+
+        const samplePeople = [
+            ["Juan Dela Cruz", "juan@example.com", "OPS"],
+            ["Maria Santos", "maria@example.com", "FIN"],
+            ["Pedro Reyes", "pedro@example.com", "HR"],
+            ["Ana Garcia", "ana@example.com", "FIN"],
+            ["Grace Lim", "grace@example.com", "HR"],
+            ["Michael Tan", "michael@example.com", "OPS"],
+            ["Lisa Cruz", "lisa@example.com", "MKT"],
+            ["Robert Diaz", "robert@example.com", "OPS"]
+        ];
+        const samplePassword = await bcrypt.hash("password123", 10);
+        const userMap = {};
+        for (const [name, email, code] of samplePeople) {
+            const user = await User.findOneAndUpdate(
+                { email },
+                { $set: { department: departmentMap[code] }, $setOnInsert: { name, email, password: samplePassword, role: "Employee" } },
+                { upsert: true, new: true, runValidators: true }
+            );
+            userMap[email] = user._id;
+        }
 
         const now = new Date();
 
@@ -83,7 +106,7 @@ const seedDatabase = async () => {
                 department: departmentMap.FIN,
                 category: "Printer",
                 priority: "Medium",
-                status: "Assigned",
+                status: "In Progress",
                 assignedTo: "IT Support",
                 slaHours: 24,
                 dueAt: new Date(now.getTime() + 12 * 60 * 60 * 1000)
@@ -117,7 +140,8 @@ const seedDatabase = async () => {
                 assignedTo: "IT Support",
                 slaHours: 24,
                 dueAt: new Date(now.getTime() - 4 * 60 * 60 * 1000),
-                resolvedAt: new Date(now.getTime() - 8 * 60 * 60 * 1000)
+                resolvedAt: new Date(now.getTime() - 8 * 60 * 60 * 1000),
+                createdAt: new Date(now.getTime() - 28 * 60 * 60 * 1000)
             },
             {
                 ticketNumber: "IT-000005",
@@ -174,15 +198,19 @@ const seedDatabase = async () => {
                 department: departmentMap.OPS,
                 category: "Hardware",
                 priority: "Medium",
-                status: "Closed",
+                status: "Resolved",
                 assignedTo: "IT Support",
                 slaHours: 24,
                 dueAt: new Date(now.getTime() - 24 * 60 * 60 * 1000),
-                resolvedAt: new Date(now.getTime() - 30 * 60 * 60 * 1000)
+                resolvedAt: new Date(now.getTime() - 30 * 60 * 60 * 1000),
+                createdAt: new Date(now.getTime() - 48 * 60 * 60 * 1000)
             }
         ];
 
-        const createdTickets = await Ticket.insertMany(tickets);
+        const createdTickets = await Ticket.insertMany(tickets.map(ticket => ({
+            ...ticket,
+            requester: userMap[ticket.requesterEmail]
+        })));
 
         const comments = [
             {

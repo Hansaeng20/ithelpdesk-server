@@ -10,8 +10,11 @@ const {
 } = require("../controllers/commentController");
 
 const router = express.Router();
+const { protect, authorize } = require("../middleware/authMiddleware");
 
-router.get("/", getComments);
+router.use(protect);
+
+router.get("/", authorize("IT Support"), getComments);
 
 router.post("/", createComment);
 
@@ -19,8 +22,8 @@ router.get("/ticket/:ticketId", getTicketComments);
 
 router.get("/:id", getComment);
 
-router.put("/:id", updateComment);
+router.put("/:id", authorize("IT Support"), updateComment);
 
-router.delete("/:id", deleteComment);
+router.delete("/:id", authorize("IT Support"), deleteComment);
 
 module.exports = router;

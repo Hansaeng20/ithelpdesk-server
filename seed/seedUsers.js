@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 
 const User = require("../models/User");
 const Ticket = require("../models/Ticket");
+const Department = require("../models/Department");
 
 dotenv.config();
 
@@ -18,6 +19,10 @@ const seedUsers = async () => {
         await User.deleteMany({});
 
         const password = await bcrypt.hash("password123", 10);
+        const department = await Department.findOne({ isActive: true });
+        if (!department) {
+            throw new Error("Create departments before seeding employee accounts.");
+        }
 
         const users = await User.insertMany([
             {
@@ -25,12 +30,14 @@ const seedUsers = async () => {
                 email: "employee@test.com",
                 password,
                 role: "Employee",
+                department: department._id,
             },
             {
                 name: "Second Employee",
                 email: "employee2@test.com",
                 password,
                 role: "Employee",
+                department: department._id,
             },
             {
                 name: "IT Support",

@@ -17,9 +17,6 @@ const app = express();
 
 const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB
-connectDB();
-
 // Global middleware
 app.use(cors());
 app.use(express.json());
@@ -43,7 +40,14 @@ app.use(notFound);
 // Error-handling middleware
 app.use(errorHandler);
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-});
+// Start the API only after the database is ready.
+connectDB()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`Server running on http://localhost:${PORT}`);
+        });
+    })
+    .catch((error) => {
+        console.error("MongoDB connection failed:", error.message);
+        process.exitCode = 1;
+    });

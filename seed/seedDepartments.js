@@ -36,10 +36,9 @@ const seedDepartments = async () => {
 
         console.log("MongoDB connected.");
 
-        await Department.deleteMany({});
-
-        const createdDepartments =
-            await Department.insertMany(departments);
+        const createdDepartments = await Promise.all(departments.map(({ code, ...details }) =>
+            Department.findOneAndUpdate({ code }, { $set: details }, { upsert: true, new: true, runValidators: true })
+        ));
 
         console.log(
             `Created ${createdDepartments.length} departments.`

@@ -46,10 +46,10 @@ const register = async (req, res, next) => {
         const departmentExists =
             await Department.findById(department);
 
-        if (!departmentExists) {
+        if (!departmentExists || !departmentExists.isActive) {
             return res.status(400).json({
                 success: false,
-                message: "Selected department was not found.",
+                message: "Selected department is not available.",
             });
         }
 
@@ -75,7 +75,11 @@ const register = async (req, res, next) => {
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                department: user.department,
+                department: {
+                    _id: departmentExists._id,
+                    name: departmentExists.name,
+                    code: departmentExists.code,
+                },
             },
         });
     } catch (error) {
