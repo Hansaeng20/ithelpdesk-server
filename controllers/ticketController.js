@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Ticket = require("../models/Ticket");
 const Department = require("../models/Department");
 const User = require("../models/User");
+const TicketComment = require("../models/TicketComment");
 
 const isValidObjectId = (id) => {
     return mongoose.Types.ObjectId.isValid(id);
@@ -261,16 +262,13 @@ const updateTicket = async (req, res, next) => {
             });
         }
 
-        const allowedFields = [
-            "title",
-            "description",
-            "requesterName",
-            "requesterEmail",
-            "department",
-            "category",
-            "priority",
-            "assignedTo"
-        ];
+        const allowedFields = req.user.role === "IT Support"
+            ? ["title", "description", "department", "category", "priority"]
+            : ["title", "description", "category"];
+
+        if (req.user.role === "Employee" && (req.body.priority !== undefined || req.body.department !== undefined || req.body.assignedTo !== undefined)) {
+            return res.status(403).json({ success: false, message: "Employees cannot change ticket priority, department, or assignment." });
+        }
 
         const updateData = {};
 
@@ -310,10 +308,6 @@ const updateTicket = async (req, res, next) => {
                 });
             }
 
-            updateData.slaHours = slaHours;
-            updateData.dueAt = new Date(
-                Date.now() + slaHours * 60 * 60 * 1000
-            );
         }
 
         const ticket = await Ticket.findById(id);
@@ -335,18 +329,11 @@ const updateTicket = async (req, res, next) => {
             });
         }
 
-        if (
-            req.user.role === "Employee" &&
-            (
-                updateData.assignedTo !== undefined ||
-                updateData.priority !== undefined
-            )
-        ) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Employees cannot modify ticket assignment or priority."
-            });
+        if (updateData.priority && updateData.priority !== ticket.priority) {
+            updateData.slaHours = SLA_HOURS[updateData.priority];
+            updateData.dueAt = new Date(
+                new Date(ticket.createdAt).getTime() + updateData.slaHours * 60 * 60 * 1000
+            );
         }
 
         Object.assign(ticket, updateData);
@@ -408,13 +395,7 @@ const deleteTicket = async (req, res, next) => {
         }
 
         await ticket.deleteOne();
-
-        if (!ticket) {
-            return res.status(404).json({
-                success: false,
-                message: "Ticket not found"
-            });
-        }
+        await TicketComment.deleteMany({ ticket: id });
 
         res.status(200).json({
             success: true,
@@ -499,10 +480,6 @@ const updateTicketStatus = async (req, res, next) => {
             ticket.resolvedAt = new Date();
         }
 
-        if (status === "Closed" && !ticket.resolvedAt) {
-            ticket.resolvedAt = new Date();
-        }
-
         await ticket.save();
 
         const updatedTicket = await Ticket.findById(
@@ -543,7 +520,6 @@ const searchTickets = async (req, res, next) => {
             priority,
             status,
             department,
-            assignedTo,
             sortBy = "createdAt",
             order = "desc"
         } = req.query;
@@ -555,15 +531,15 @@ const searchTickets = async (req, res, next) => {
 
         // Keyword search
         if (q) {
-            const keywordRegex = new RegExp(q, "i");
+            const escapedQuery = String(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const keywordRegex = new RegExp(escapedQuery, "i");
 
             filter.$or = [
                 { ticketNumber: keywordRegex },
                 { title: keywordRegex },
                 { description: keywordRegex },
                 { requesterName: keywordRegex },
-                { requesterEmail: keywordRegex },
-                { assignedTo: keywordRegex }
+                { requesterEmail: keywordRegex }
             ];
         }
 
@@ -577,10 +553,6 @@ const searchTickets = async (req, res, next) => {
 
         if (status) {
             filter.status = status;
-        }
-
-        if (assignedTo) {
-            filter.assignedTo = new RegExp(assignedTo, "i");
         }
 
         if (department) {
@@ -622,7 +594,6 @@ const searchTickets = async (req, res, next) => {
                 priority: priority || "",
                 status: status || "",
                 department: department || "",
-                assignedTo: assignedTo || "",
                 sortBy: selectedSortField,
                 order: order === "asc" ? "asc" : "desc"
             },
@@ -641,7 +612,7 @@ const getOverdueTickets = async (req, res, next) => {
         const filter = {
             dueAt: { $lt: now },
             status: {
-                $nin: ["Resolved", "Closed", "Cancelled"]
+                $nin: ["Resolved", "Cancelled"]
             }
         };
 

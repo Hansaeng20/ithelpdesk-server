@@ -2,6 +2,11 @@ const mongoose = require("mongoose");
 
 const TicketComment = require("../models/TicketComment");
 const Ticket = require("../models/Ticket");
+const User = require("../models/User");
+
+const canAccessTicket = (ticket, user) =>
+    user.role === "IT Support" ||
+    ticket.requester?.toString() === user.id.toString();
 
 // GET ALL COMMENTS
 const getComments = async (req, res, next) => {
@@ -34,7 +39,7 @@ const getComment = async (req, res, next) => {
 
         const comment = await TicketComment.findById(id).populate(
             "ticket",
-            "ticketNumber title"
+            "ticketNumber title requester"
         );
 
         if (!comment) {
@@ -42,6 +47,10 @@ const getComment = async (req, res, next) => {
                 success: false,
                 message: "Comment not found"
             });
+        }
+
+        if (!comment.ticket || !canAccessTicket(comment.ticket, req.user)) {
+            return res.status(403).json({ success: false, message: "You cannot access this comment." });
         }
 
         res.status(200).json({
@@ -74,6 +83,10 @@ const getTicketComments = async (req, res, next) => {
             });
         }
 
+        if (!canAccessTicket(ticket, req.user)) {
+            return res.status(403).json({ success: false, message: "You cannot access this ticket." });
+        }
+
         const comments = await TicketComment.find({
             ticket: ticketId
         }).sort({ createdAt: 1 });
@@ -96,12 +109,7 @@ const getTicketComments = async (req, res, next) => {
 // CREATE COMMENT
 const createComment = async (req, res, next) => {
     try {
-        const {
-            ticket,
-            authorName,
-            message,
-            authorType
-        } = req.body;
+        const { ticket, message } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(ticket)) {
             return res.status(400).json({
@@ -119,11 +127,20 @@ const createComment = async (req, res, next) => {
             });
         }
 
+        if (!canAccessTicket(ticketExists, req.user)) {
+            return res.status(403).json({ success: false, message: "You cannot comment on this ticket." });
+        }
+
+        const author = await User.findById(req.user.id);
+        if (!author) {
+            return res.status(401).json({ success: false, message: "User account not found." });
+        }
+
         const comment = await TicketComment.create({
             ticket,
-            authorName,
+            authorName: author.name,
             message,
-            authorType
+            authorType: author.role === "IT Support" ? "Support" : "Requester"
         });
 
         const populatedComment = await TicketComment.findById(
@@ -162,11 +179,7 @@ const updateComment = async (req, res, next) => {
             });
         }
 
-        const allowedFields = [
-            "authorName",
-            "message",
-            "authorType"
-        ];
+        const allowedFields = ["message"];
 
         const updateData = {};
 
