@@ -42,23 +42,20 @@ router.get(
     getTicketAnalytics
 );
 
-// Only Employees can create tickets
 router.post(
     "/",
     protect,
     authorize("Employee"),
     createTicket
 );
-// Individual ticket
+
 router.get("/:id", protect, getTicket);
 
-// Employees can only modify their own tickets.
-// IT Support can modify all tickets.
+
 router.put("/:id", protect, updateTicket);
 
 router.delete("/:id", protect, deleteTicket);
 
-// Only IT Support can change ticket status
 router.patch(
     "/:id/status",
     protect,

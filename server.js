@@ -17,15 +17,14 @@ const app = express();
 
 const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB
+
 connectDB();
 
-// Global middleware
 app.use(cors());
 app.use(express.json());
 app.use(requestLogger);
 
-// API test route
+
 app.get("/api", (req, res) => {
     res.status(200).json({
         success: true,
@@ -37,13 +36,11 @@ app.use("/api/departments", departmentRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/comments", commentRoutes);
 
-// 404 middleware
 app.use(notFound);
 
-// Error-handling middleware
+
 app.use(errorHandler);
 
-// Start server
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
